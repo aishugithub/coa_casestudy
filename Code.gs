@@ -150,6 +150,59 @@ var CASE_INFO = {
   ]
  }
 };   // caseId -> { dept, title, debrief: [...] }
+var WHY = {
+ "cyber": {
+  "A1": "Exhibit 1 lists the emergency-stop button at position 1, nearest the processor.",
+  "A2": "Separate I/O address space + IN/OUT instructions = port-mapped (isolated) I/O. Memory-mapped I/O uses ordinary Load/Store.",
+  "A3": "Exhibit 1: the barcode scanner's vector number is 0x0C.",
+  "A4": "The case says the log is copied every night at 2 AM, when the machines are off.",
+  "B1": "In a daisy chain the acknowledgement is taken by the first requesting device. The scanner is last, so while devices ahead of it keep requesting, it never gets served — starvation.",
+  "B2": "In the vectored method the device sends its own vector (0x09); the processor looks it up in the vector table and jumps to that ISR (0x0001_0200).",
+  "B3": "I/O instructions such as OUT are privileged. A user-mode program that runs one causes an exception, and the OS stops it.",
+  "B4": "The processor programs the DMA controller with the starting address, the word count and the direction, then the controller moves the block by itself.",
+  "C1": "At 2 AM the processor has nothing urgent to do, so burst mode — take the bus and move the whole block at once — is fastest.",
+  "C2": "During production the processor must keep serving the machines, so cycle stealing (one bus cycle at a time) is better.",
+  "C3": "Clearing a device's interrupt-enable bit masks just that device, so the others can be served again.",
+  "C4": "The most urgent, safety-critical device must have the highest priority — position 1 in a daisy chain.",
+  "D1": "Only this reply names the real cause (a flooding sensor starving the last device) and the right fixes (mask it, E-stop first, OUT stays privileged)."
+ },
+ "aiml": {
+  "A1": "Device registers with normal memory addresses, read by Load/Store = memory-mapped I/O.",
+  "A2": "Exhibit 1 lists the music touchscreen at position 5, farthest from the processor.",
+  "A3": "Exhibit 1: the AI accelerator's vector number is 0x42.",
+  "A4": "The case says camera frames are copied into main memory by a DMA controller.",
+  "B1": "Repeatedly checking a status flag in a loop is program-controlled I/O, also called busy waiting.",
+  "B2": "The touchscreen is last in the daisy chain; while devices ahead of it keep interrupting, it never gets the acknowledgement — starvation.",
+  "B3": "Writing a protected register from user mode is a privilege violation — an exception — and the OS stops the app.",
+  "B4": "Polling means the processor asks each device in turn, \"Is it you?\", until it finds the one that interrupted.",
+  "C1": "Instead of busy waiting, let the accelerator raise an interrupt when it is done; the processor is free in between.",
+  "C2": "While driving the processor must keep reacting to the radar, so the camera DMA should use cycle stealing.",
+  "C3": "Before the cart moves the processor has little to do, so burst mode finishes the map load fastest.",
+  "C4": "A central arbiter grants the bus by priority: the radar DMA first, then the camera DMA.",
+  "D1": "Only this reply links each problem to its cause (busy waiting, starvation, user-mode access) and gives the right fixes."
+ },
+ "ece": {
+  "A1": "The case says the ADC raises an interrupt every time a new sample is ready.",
+  "A2": "Exhibit 1 lists the ECG ADC at position 1, nearest the processor.",
+  "A3": "Exhibit 1: the printer's vector number is 0x24.",
+  "A4": "Device registers with normal memory addresses, read by Load/Store = memory-mapped I/O.",
+  "B1": "The old software kept checking the printer's status in a loop — busy waiting — so it had no time for the ECG.",
+  "B2": "In a daisy chain the device nearer the processor takes the acknowledgement first; the pump alarm is ahead of the keyboard.",
+  "B3": "On accepting an interrupt the processor saves at least the PC and the PS, so the interrupted program can resume exactly.",
+  "B4": "In burst mode the DMA controller keeps the bus for the whole block, so the processor cannot store new ECG samples meanwhile.",
+  "C1": "With interrupt-driven I/O the printer interrupts only when it is ready, so the processor keeps handling the ECG in between.",
+  "C2": "Cycle stealing takes one bus cycle at a time, so the processor can keep storing ECG samples during the copy.",
+  "C3": "The Return-from-interrupt instruction restores the saved PC and PS and resumes the interrupted program.",
+  "C4": "User programs cannot touch devices directly; they make a system call and the OS does the I/O in supervisor mode.",
+  "D1": "Only this report gives the real causes (busy waiting, burst-mode DMA) and the right fixes (interrupts, cycle stealing)."
+ }
+};          // caseId -> { qid: one-line explanation shown in the review }
+
+/* ---- SWITCH: what students see after submitting ---------------------------
+ *  false -> score only (DEFAULT — the teacher reveals answers in class using
+ *           teacher/AnswerKey.html, so early finishers can't pass answers on)
+ *  true  -> also sends each question's right/wrong, correct answer and reason */
+var REVEAL_ANSWERS = false;   // keep false: answers are shown by the teacher in class
 
 var QIDS = ['A1','A2','A3','A4','B1','B2','B3','B4','C1','C2','C3','C4','D1'];
 
@@ -184,12 +237,25 @@ function doPost(e) {
     if (sheet.getLastRow() === 0) { sheet.appendRow(HEADERS); sheet.setFrozenRows(1); }
     sheet.appendRow(HEADERS.map(function (k) { var v = data[k]; return (v === undefined || v === null) ? '' : v; }));
     try { updateSummary(); } catch (err2) { /* never lose a submission because of the summary */ }
-    return json({ ok:true, total:data.total_score });
+    return json(reviewFor_(data));
   } catch (err) {
     return json({ ok:false, error:String(err) });
   } finally {
     lock.releaseLock();
   }
+}
+
+/** reviewFor_(data) — what the student's page shows after submitting. */
+function reviewFor_(data) {
+  var out = { ok:true, reveal:REVEAL_ANSWERS, total:data.total_score, outOf:QIDS.length,
+              parts:{ A:data.score_A, B:data.score_B, C:data.score_C, D:data.score_D } };
+  if (REVEAL_ANSWERS) {
+    var key = KEY[data.caseId] || {}, why = WHY[data.caseId] || {};
+    out.items = QIDS.map(function (q) {
+      return { id:q, yours:data[q] || '', correct:key[q], ok:data['ok_' + q] === 1, why:why[q] || '' };
+    });
+  }
+  return out;
 }
 
 function doGet() {

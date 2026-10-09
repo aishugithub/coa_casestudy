@@ -22,6 +22,13 @@ var SUMMARY_SHEET = 'Summary';
 var KEY = __KEY__;          // caseId -> { qid: correct option text }
 var QTEXT = __QTEXT__;      // caseId -> { qid: question text }
 var CASE_INFO = __INFO__;   // caseId -> { dept, title, debrief: [...] }
+var WHY = __WHY__;          // caseId -> { qid: one-line explanation shown in the review }
+
+/* ---- SWITCH: what students see after submitting ---------------------------
+ *  false -> score only (DEFAULT — the teacher reveals answers in class using
+ *           teacher/AnswerKey.html, so early finishers can't pass answers on)
+ *  true  -> also sends each question's right/wrong, correct answer and reason */
+var REVEAL_ANSWERS = false;   // keep false: answers are shown by the teacher in class
 
 var QIDS = ['A1','A2','A3','A4','B1','B2','B3','B4','C1','C2','C3','C4','D1'];
 
@@ -56,12 +63,25 @@ function doPost(e) {
     if (sheet.getLastRow() === 0) { sheet.appendRow(HEADERS); sheet.setFrozenRows(1); }
     sheet.appendRow(HEADERS.map(function (k) { var v = data[k]; return (v === undefined || v === null) ? '' : v; }));
     try { updateSummary(); } catch (err2) { /* never lose a submission because of the summary */ }
-    return json({ ok:true, total:data.total_score });
+    return json(reviewFor_(data));
   } catch (err) {
     return json({ ok:false, error:String(err) });
   } finally {
     lock.releaseLock();
   }
+}
+
+/** reviewFor_(data) — what the student's page shows after submitting. */
+function reviewFor_(data) {
+  var out = { ok:true, reveal:REVEAL_ANSWERS, total:data.total_score, outOf:QIDS.length,
+              parts:{ A:data.score_A, B:data.score_B, C:data.score_C, D:data.score_D } };
+  if (REVEAL_ANSWERS) {
+    var key = KEY[data.caseId] || {}, why = WHY[data.caseId] || {};
+    out.items = QIDS.map(function (q) {
+      return { id:q, yours:data[q] || '', correct:key[q], ok:data['ok_' + q] === 1, why:why[q] || '' };
+    });
+  }
+  return out;
 }
 
 function doGet() {
