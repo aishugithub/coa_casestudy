@@ -204,6 +204,24 @@ var WHY = {
  *  true  -> also sends each question's right/wrong, correct answer and reason */
 var REVEAL_ANSWERS = false;   // keep false: answers are shown by the teacher in class
 
+/* ---- EMAILED REVIEW --------------------------------------------------------
+ * Each student gets an email with their score and a full review (their answer,
+ * the correct answer, and the reason for every question).
+ * Address = register number + EMAIL_DOMAIN, e.g. E0125001 -> E0125001@sriher.edu.in
+ *
+ * SEND_EMAIL_ON_SUBMIT
+ *   false (DEFAULT) -> nothing is emailed during the test. After everyone has
+ *                      finished, use the Sheet menu  Case study -> Send review emails.
+ *                      (So early finishers can't pass answers to others.)
+ *   true            -> each student is emailed the moment they submit.
+ *
+ * Daily limit: a personal Gmail account can email ~100 people/day; a Google
+ * Workspace (college) account ~1500/day. "Send review emails" stops at the
+ * limit and remembers who was sent — just run it again the next day.         */
+var EMAIL_DOMAIN = '@sriher.edu.in';
+var SEND_EMAIL_ON_SUBMIT = false;
+var COURSE_NAME = 'Computer Organization & Architecture (CSE23CT201)';
+
 var QIDS = ['A1','A2','A3','A4','B1','B2','B3','B4','C1','C2','C3','C4','D1'];
 
 /* ---- Column order (single source of truth for header + every row) -------- */
@@ -211,7 +229,7 @@ var HEADERS = ['submittedAt','regno','name','dept','caseId']
   .concat(QIDS)
   .concat(['score_A','score_B','score_C','score_D','total_score'])
   .concat(QIDS.map(function (q) { return 'ok_' + q; }))
-  .concat(['readSeconds','totalSeconds','userAgent']);
+  .concat(['readSeconds','totalSeconds','userAgent','emailedAt']);
 
 /** scoreRecord(data) — adds ok_*, score_A/B/C and total_score to data. */
 function scoreRecord(data) {
@@ -235,6 +253,9 @@ function doPost(e) {
     var data = scoreRecord(JSON.parse(e.postData.contents));
     var sheet = getSheet_(RESP_SHEET);
     if (sheet.getLastRow() === 0) { sheet.appendRow(HEADERS); sheet.setFrozenRows(1); }
+    if (SEND_EMAIL_ON_SUBMIT) {
+      try { data.emailedAt = sendReviewTo_(data); } catch (mailErr) { data.emailedAt = 'FAILED: ' + mailErr; }
+    }
     sheet.appendRow(HEADERS.map(function (k) { var v = data[k]; return (v === undefined || v === null) ? '' : v; }));
     try { updateSummary(); } catch (err2) { /* never lose a submission because of the summary */ }
     return json(reviewFor_(data));
@@ -328,7 +349,137 @@ function getSheet_(name) {
 }
 
 function onOpen() {
-  SpreadsheetApp.getUi().createMenu('Case study').addItem('Refresh summary', 'updateSummary').addToUi();
+  SpreadsheetApp.getUi().createMenu('Case study')
+    .addItem('Refresh summary', 'updateSummary')
+    .addSeparator()
+    .addItem('Send a TEST review email to me', 'sendTestEmailToMe')
+    .addItem('Send review emails (to students not yet emailed)', 'sendReviewEmails')
+    .addToUi();
+}
+
+/* ============================================================================
+   EMAIL REVIEW
+   ============================================================================ */
+
+/** Register number -> college email, or '' if the register number looks wrong. */
+function emailFor_(regno) {
+  var r = String(regno || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  if (!/^[A-Z]\d{7}$/.test(r)) return '';          // e.g. E0125001
+  return r + EMAIL_DOMAIN;
+}
+
+function esc_(s) {
+  return String(s === undefined || s === null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+/** Builds the HTML review for one submission (data = a scored record). */
+function reviewHtml_(data) {
+  var c = data.caseId, info = CASE_INFO[c] || { dept:'', title:'' };
+  var key = KEY[c] || {}, why = WHY[c] || {}, qt = QTEXT[c] || {};
+  var partName = { A:'Part A — Find the facts', B:'Part B — Link to concepts', C:'Part C — Decide', D:'Part D — Recommend' };
+  var partMax = { A:0, B:0, C:0, D:0 };
+  QIDS.forEach(function (q) { partMax[q.charAt(0)]++; });
+  var h = '<div style="font-family:Arial,Helvetica,sans-serif;font-size:14px;color:#1c2430;max-width:680px">';
+  h += '<p>Dear ' + esc_(data.name) + ',</p>';
+  h += '<p>Here is your review for the Unit 5 case study <b>“' + esc_(info.title) + '”</b> (' + esc_(info.dept) + ').</p>';
+  h += '<div style="background:#eef4fb;border:1px solid #b9d4ef;border-radius:8px;padding:12px 16px;margin:12px 0">' +
+       '<div style="font-size:22px;font-weight:bold;color:#2c6fb8">Score: ' + data.total_score + ' / ' + QIDS.length + '</div>' +
+       '<div style="color:#5c6672">Part A: ' + data.score_A + '/' + partMax.A + ' &nbsp;·&nbsp; Part B: ' + data.score_B + '/' + partMax.B +
+       ' &nbsp;·&nbsp; Part C: ' + data.score_C + '/' + partMax.C + ' &nbsp;·&nbsp; Part D: ' + data.score_D + '/' + partMax.D + '</div></div>';
+  var lastPart = '', n = 0;
+  QIDS.forEach(function (q) {
+    var p = q.charAt(0);
+    if (p !== lastPart) { h += '<h3 style="color:#2c6fb8;margin:18px 0 6px">' + partName[p] + '</h3>'; lastPart = p; }
+    n++;
+    var ok = String(data['ok_' + q]) === '1';
+    h += '<div style="border:1px solid #e3e0da;border-left:5px solid ' + (ok ? '#2f8a3c' : '#c0392b') + ';border-radius:6px;padding:10px 12px;margin:8px 0;background:' + (ok ? '#f2faf3' : '#fdf3f2') + '">';
+    h += '<div style="font-weight:bold;margin-bottom:4px">Q' + n + '. ' + esc_(qt[q]) + '</div>';
+    h += '<div>' + (ok ? '✔' : '✘') + ' Your answer: <b>' + esc_(data[q] || '—') + '</b></div>';
+    if (!ok) h += '<div style="color:#2f8a3c">✔ Correct answer: <b>' + esc_(key[q]) + '</b></div>';
+    if (why[q]) h += '<div style="color:#5c6672;margin-top:4px">💡 ' + esc_(why[q]) + '</div>';
+    h += '</div>';
+  });
+  h += '<p style="margin-top:16px">Revise the questions marked in red using your Unit 5 notes.</p>';
+  h += '<p style="color:#5c6672;font-size:12px">' + esc_(COURSE_NAME) + ' · This is an automated email — please do not reply.</p></div>';
+  return h;
+}
+
+/** Sends one review email. Returns the timestamp written to the emailedAt column. */
+function sendReviewTo_(data, overrideTo) {
+  var to = overrideTo || emailFor_(data.regno);
+  if (!to) return 'SKIPPED: register number not in the form E0125001';
+  var info = CASE_INFO[data.caseId] || { title:'' };
+  MailApp.sendEmail({
+    to: to,
+    subject: 'COA Unit 5 case study — your score ' + data.total_score + '/' + QIDS.length + ' and review',
+    htmlBody: reviewHtml_(data),
+    name: 'COA Unit 5 Case Study'
+  });
+  return overrideTo ? 'TEST' : new Date().toISOString();
+}
+
+/** Reads a Responses row back into a record object. */
+function rowToRecord_(head, row) {
+  var d = {};
+  head.forEach(function (h, i) { d[h] = row[i]; });
+  return d;
+}
+
+/**
+ * Menu: Case study → Send review emails.
+ * Emails every student whose LATEST submission has not been emailed yet.
+ * Stops safely at the daily email limit; run it again later to continue.
+ */
+function sendReviewEmails() {
+  var ui = SpreadsheetApp.getUi();
+  var sh = getSheet_(RESP_SHEET);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) { ui.alert('No submissions yet.'); return; }
+  var head = values[0];
+  var colEmailed = head.indexOf('emailedAt');
+  if (colEmailed < 0) { ui.alert('The Responses tab has no "emailedAt" column. Delete the Responses tab (after copying any data you need) so it is recreated with the new columns.'); return; }
+  var colReg = head.indexOf('regno'), colCase = head.indexOf('caseId');
+
+  // latest submission per student (+ case) only
+  var latestRow = {};
+  for (var r = 1; r < values.length; r++) latestRow[values[r][colReg] + '|' + values[r][colCase]] = r;
+  var todo = Object.keys(latestRow).map(function (k) { return latestRow[k]; })
+    .filter(function (r) { return !values[r][colEmailed]; });
+  if (!todo.length) { ui.alert('Everyone has already been emailed.'); return; }
+
+  var quota = MailApp.getRemainingDailyQuota();
+  var ans = ui.alert('Send review emails',
+    todo.length + ' student(s) still need their review email.\nYour Google account can send ' + quota + ' more email(s) today.\n\nSend now?',
+    ui.ButtonSet.YES_NO);
+  if (ans !== ui.Button.YES) return;
+
+  var sent = 0, skipped = 0, failed = 0;
+  for (var i = 0; i < todo.length; i++) {
+    if (MailApp.getRemainingDailyQuota() < 1) break;
+    var rowIdx = todo[i];
+    var rec = rowToRecord_(head, values[rowIdx]);
+    var stamp;
+    try { stamp = sendReviewTo_(rec); } catch (e) { stamp = 'FAILED: ' + e; }
+    sh.getRange(rowIdx + 1, colEmailed + 1).setValue(stamp);
+    if (String(stamp).indexOf('SKIPPED') === 0) skipped++;
+    else if (String(stamp).indexOf('FAILED') === 0) failed++;
+    else sent++;
+  }
+  var left = todo.length - sent - skipped - failed;
+  ui.alert('Done.\nSent: ' + sent + '\nSkipped (register number looks wrong — see emailedAt column): ' + skipped +
+    '\nFailed: ' + failed + (left > 0 ? '\n\nDaily email limit reached — ' + left + ' left. Run this again tomorrow; it continues from where it stopped.' : ''));
+}
+
+/** Menu: sends the first student's review to YOU, to check how it looks. */
+function sendTestEmailToMe() {
+  var ui = SpreadsheetApp.getUi();
+  var sh = getSheet_(RESP_SHEET);
+  var values = sh.getDataRange().getValues();
+  if (values.length < 2) { ui.alert('Make one test submission first.'); return; }
+  var me = Session.getEffectiveUser().getEmail();
+  sendReviewTo_(rowToRecord_(values[0], values[1]), me);
+  ui.alert('Test review email (for ' + values[1][values[0].indexOf('regno')] + ') sent to ' + me + '.');
 }
 
 function json(obj) {

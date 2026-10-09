@@ -866,7 +866,7 @@ function renderIdentity(){
   return '<div class="card"><h2>Before you begin</h2>' +
     '<p class="lead">You will read a short real-life case about how a processor talks to its I/O devices, then answer 13 multiple-choice questions. About 25 minutes.</p>' +
     '<label class="field" for="regno">Register Number</label>' +
-    '<input type="text" id="regno" autocomplete="off" placeholder="e.g. E0225001" value="'+esc(state.answers.regno||"")+'" oninput="this.value=this.value.toUpperCase()">' +
+    '<input type="text" id="regno" autocomplete="off" placeholder="e.g. E0125001" value="'+esc(state.answers.regno||"")+'" oninput="this.value=this.value.toUpperCase()">' +
     '<label class="field" for="name">Name</label>' +
     '<input type="text" id="name" autocomplete="off" placeholder="Your full name" value="'+esc(state.answers.name||"")+'">' +
     '<label class="field" for="dept">Department</label>' +
@@ -898,7 +898,7 @@ function renderDone(){
     h += '<div class="scorebox"><div class="big">'+r.total+' / '+r.outOf+'</div><div class="parts">' +
       ["A","B","C","D"].map(p => '<span>Part '+p+': <b>'+r.parts[p]+' / '+state.plan.parts[p].length+'</b></span>').join("") + '</div></div>';
     if (r.reveal) h += '<div style="text-align:center;margin-top:14px"><button class="primary" onclick="showReview()">🔍 Review my answers</button></div>';
-    else h += '<p class="lead" style="text-align:center;margin-top:12px">Your teacher will go through the answers in class.</p>';
+    else h += '<p class="lead" style="text-align:center;margin-top:12px">A detailed review of your answers will be emailed to <b>'+esc(state.answers.regno)+'@sriher.edu.in</b> after the class.</p>';
   } else {
     h += '<p class="lead" style="text-align:center">Your answers have been recorded. Your score will be shared in class.</p>';
   }
@@ -958,6 +958,7 @@ function validateCurrent(){
     const name  = (document.getElementById("name").value||"").trim();
     const caseId = urlCase() || document.getElementById("dept").value;
     if (!regno) return "Please enter your Register Number.";
+    if (!/^[A-Z]\d{7}$/.test(regno)) return "Register Number should look like E0125001 (one letter + 7 digits). Your review is emailed to this number @sriher.edu.in, so please check it.";
     if (!name)  return "Please enter your name.";
     if (!caseId) return "Please choose your department.";
     if (state.plan && (state.answers.regno !== regno || state.answers.caseId !== caseId)) {
